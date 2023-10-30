@@ -6,9 +6,9 @@ from physion_feature_extraction.utils import DataAugmentationForVideoMAE
 import models_mae
 
 
-def prepare_model(chkpt_dir, arch='mae_vit_large_patch16'):
+def prepare_model(chkpt_dir, arch='mae_vit_large_patch16', img_size=224):
     # build model
-    model = getattr(models_mae, arch)()
+    model = getattr(models_mae, arch)(img_size=img_size)
     # load model
     checkpoint = torch.load(chkpt_dir, map_location='cpu')
     msg = model.load_state_dict(checkpoint['model'], strict=False)
@@ -16,7 +16,7 @@ def prepare_model(chkpt_dir, arch='mae_vit_large_patch16'):
     return model
 
 class MAE(PhysionFeatureExtractor):
-    def __init__(self, weights_path, model_name):
+    def __init__(self, weights_path, model_name, patch_size, img_size=224):
 
         super().__init__()
 
@@ -25,7 +25,16 @@ class MAE(PhysionFeatureExtractor):
         # download checkpoint if not exist
 
         chkpt_dir = weights_path
-        self.model_mae = prepare_model(chkpt_dir, model_name)
+
+        self.img_size = img_size
+
+        self.model_mae = prepare_model(chkpt_dir, model_name, img_size=img_size)
+
+        self.patch_size = patch_size
+
+        self.ps = self.img_size//(self.patch_size)
+
+        self.ps = self.ps**2
 
 
     def transform(self, ):
@@ -36,7 +45,7 @@ class MAE(PhysionFeatureExtractor):
 
         return DataAugmentationForVideoMAE(
             imagenet_normalize=True,
-            rescale_size=224,
+            rescale_size=self.img_size,
         ), 150, 4
 
     def extract_features(self, videos):
@@ -51,7 +60,7 @@ class MAE(PhysionFeatureExtractor):
 
         def forward(arr, vid):
 
-            mask = np.ones([vid.shape[0], 196]).astype('bool')
+            mask = np.ones([vid.shape[0], self.ps]).astype('bool')
 
             mask[:, arr] = False
 
@@ -63,7 +72,7 @@ class MAE(PhysionFeatureExtractor):
 
         def assign(all_feats, arr, feats):
 
-            mask = np.ones([all_feats.shape[0], 196]).astype('bool')
+            mask = np.ones([all_feats.shape[0], self.ps]).astype('bool')
 
             mask[:, arr] = False
 
@@ -71,17 +80,17 @@ class MAE(PhysionFeatureExtractor):
 
             all_feats[~mask] = feats.flatten(0, 1)
 
-        arr = np.arange(196)
+        arr = np.arange(self.ps)
         np.random.shuffle(arr)
         arr = np.split(arr, 4)
 
         feats = [forward(x, videos) for x in arr]
 
-        all_feats = torch.zeros([feats[0].shape[0], 196, feats[0].shape[-1]]).to(feats[0].device)
+        all_feats = torch.zeros([feats[0].shape[0], self.ps, feats[0].shape[-1]]).to(feats[0].device)
 
         tmp = [assign(all_feats, ar, feat) for (feat, ar) in zip(feats, arr)]
 
-        all_feats = all_feats.reshape(bs, t, 196, -1)
+        all_feats = all_feats.reshape(bs, t, self.ps, -1)
 
         return all_feats
 
@@ -101,9 +110,16 @@ class MAE(PhysionFeatureExtractor):
 
 class MAE_large(MAE):
     def __init__(self, weights_path):
-        super().__init__(weights_path, 'mae_vit_large_patch16')
+        super().__init__(weights_path, 'mae_vit_large_patch16', 16)
 
+class MAE_large_256(MAE):
+    def __init__(self, weights_path):
+        super().__init__(weights_path, 'mae_vit_large_patch16', 16, 256)
 
 class MAE_huge(MAE):
     def __init__(self, weights_path):
-        super().__init__(weights_path, 'mae_vit_huge_patch16')
+        super().__init__(weights_path, 'mae_vit_huge_patch14', 14)
+
+class MAE_base(MAE):
+    def __init__(self, weights_path):
+        super().__init__(weights_path, 'mae_vit_base_patch16', 16)
